@@ -189,7 +189,7 @@
 
           try {
             const response = await fetch(
-              "http://localhost:8000/upload_knowledge",
+              "https://callassistify.onrender.com/upload_knowledge",
               {
                 method: "POST",
                 body: formData,
@@ -278,7 +278,7 @@
         }
 
         initializeWebSocket() {
-          this.ws = new WebSocket("ws://localhost:8000/ws");
+          this.ws = new WebSocket("wss://callassistify.onrender.com//ws");
 
           this.ws.onopen = () => {
             this.ws.send(JSON.stringify({ action: "start" }));
