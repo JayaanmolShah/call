@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Sales Agent Chat</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 1000px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        background-color: #f5f5f5;
+      }
+
+      .chat-container {
+        background-color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+
+      .file-upload {
+        margin-bottom: 1rem;
+        padding: 1rem;
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        text-align: center;
+      }
+
+      .file-upload.dragover {
+        border-color: #4caf50;
+        background-color: rgba(76, 175, 80, 0.1);
+      }
+
+      .controls {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .button {
+        padding: 0.75rem 1.5rem;
+        font-size: 1rem;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .record {
+        background-color: #4caf50;
+        color: white;
+      }
+
+      .record.active {
+        background-color: #f44336;
+      }
+
+      .status {
+        margin: 1rem 0;
+        font-style: italic;
+        color: #666;
+      }
+
+      .conversation {
+        margin-top: 2rem;
+        max-height: 500px;
+        overflow-y: auto;
+        padding: 1rem;
+        border: 1px solid #eee;
+        border-radius: 8px;
+      }
+
+      .message {
+        margin: 1rem 0;
+        padding: 1rem;
+        border-radius: 8px;
+        max-width: 80%;
+      }
+
+      .user-message {
+        background-color: #e3f2fd;
+        margin-left: auto;
+      }
+
+      .agent-message {
+        background-color: #f5f5f5;
+        margin-right: auto;
+      }
+
+      .upload-status {
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+      }
+
+      .error {
+        color: #f44336;
+      }
+      .success {
+        color: #4caf50;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chat-container">
+      <div id="fileUpload" class="file-upload">
+        <input type="file" id="pdfInput" accept=".pdf" style="display: none" />
+        <label for="pdfInput" style="cursor: pointer">
+          Upload PDF Knowledge Base (Required)
+        </label>
+        <div id="uploadStatus" class="upload-status"></div>
+      </div>
+
+      <div class="controls">
+        <button id="recordButton" class="button record" disabled>
+          Start Recording
+        </button>
+      </div>
+
+      <div id="status" class="status">
+        Please upload a PDF knowledge base to begin
+      </div>
+
+      <div id="conversation" class="conversation"></div>
+    </div>
+    <script>
+      class VoiceChatApp {
+        constructor() {
+          this.ws = null;
+          this.mediaRecorder = null;
+          this.isRecording = false;
+          this.recognition = null;
+
+          this.recordButton = document.getElementById("recordButton");
+          this.status = document.getElementById("status");
+          this.conversation = document.getElementById("conversation");
+
+          this.setupFileUpload();
+          this.setupSpeechRecognition();
+          this.setupEventListeners();
+        }
+
+        setupFileUpload() {
+          const fileUpload = document.getElementById("fileUpload");
+          const pdfInput = document.getElementById("pdfInput");
+          const uploadStatus = document.getElementById("uploadStatus");
+
+          ["dragenter", "dragover", "dragleave", "drop"].forEach(
+            (eventName) => {
+              fileUpload.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              });
+            }
+          );
+
+          ["dragenter", "dragover"].forEach((eventName) => {
+            fileUpload.addEventListener(eventName, () => {
+              fileUpload.classList.add("dragover");
+            });
+          });
+
+          ["dragleave", "drop"].forEach((eventName) => {
+            fileUpload.addEventListener(eventName, () => {
+              fileUpload.classList.remove("dragover");
+            });
+          });
+
+          fileUpload.addEventListener("drop", (e) => {
+            const file = e.dataTransfer.files[0];
+            if (file) this.handleFileUpload(file);
+          });
+
+          pdfInput.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (file) this.handleFileUpload(file);
+          });
+        }
+
+        async handleFileUpload(file) {
+          if (file.type !== "application/pdf") {
+            this.updateUploadStatus("Please upload a PDF file", "error");
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append("file", file);
+
+          try {
+            const response = await fetch(
+              "http://localhost:8000/upload_knowledge",
+              {
+                method: "POST",
+                body: formData,
+              }
+            );
+
+            const result = await response.json();
+
+            if (result.status === "success") {
+              this.updateUploadStatus(
+                "Knowledge base uploaded successfully!",
+                "success"
+              );
+              this.recordButton.disabled = false;
+              this.status.textContent =
+                'Click "Start Recording" to begin conversation';
+              this.initializeWebSocket();
+            } else {
+              this.updateUploadStatus(
+                result.message || "Upload failed",
+                "error"
+              );
+            }
+          } catch (error) {
+            console.error("Upload error:", error);
+            this.updateUploadStatus("Failed to upload knowledge base", "error");
+          }
+        }
+
+        updateUploadStatus(message, type) {
+          const uploadStatus = document.getElementById("uploadStatus");
+          uploadStatus.textContent = message;
+          uploadStatus.className = `upload-status ${type}`;
+        }
+
+        setupSpeechRecognition() {
+          if (!("webkitSpeechRecognition" in window)) {
+            this.status.textContent =
+              "Speech recognition is not supported in this browser.";
+            this.recordButton.disabled = true;
+            return;
+          }
+
+          this.recognition = new webkitSpeechRecognition();
+          this.recognition.continuous = true;
+          this.recognition.interimResults = true;
+
+          this.recognition.onresult = (event) => {
+            let interimTranscript = "";
+            let finalTranscript = "";
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const transcript = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                finalTranscript += transcript;
+              } else {
+                interimTranscript += transcript;
+              }
+            }
+
+            if (finalTranscript) {
+              this.addMessage(finalTranscript, "user");
+              this.ws.send(
+                JSON.stringify({
+                  action: "message",
+                  text: finalTranscript,
+                })
+              );
+            }
+
+            if (interimTranscript) {
+              this.updateInterimText(interimTranscript);
+            }
+          };
+
+          this.recognition.onerror = (event) => {
+            console.error("Speech recognition error:", event.error);
+            this.status.textContent = `Error: ${event.error}`;
+          };
+
+          this.recognition.onend = () => {
+            if (this.isRecording) {
+              this.recognition.start();
+            }
+          };
+        }
+
+        initializeWebSocket() {
+          this.ws = new WebSocket("ws://localhost:8000/ws");
+
+          this.ws.onopen = () => {
+            this.ws.send(JSON.stringify({ action: "start" }));
+          };
+
+          this.ws.onmessage = async (event) => {
+            const data = JSON.parse(event.data);
+
+            if (data.type === "ai_response") {
+              this.addMessage(data.text, "agent");
+              if (data.audio) {
+                const audio = new Audio("data:audio/wav;base64," + data.audio);
+                await audio.play();
+              }
+            }
+          };
+
+          this.ws.onerror = (error) => {
+            console.error("WebSocket error:", error);
+            this.status.textContent =
+              "Connection error. Please refresh the page.";
+          };
+        }
+
+        setupEventListeners() {
+          this.recordButton.addEventListener("click", () => {
+            if (!this.isRecording) {
+              this.startRecording();
+            } else {
+              this.stopRecording();
+            }
+          });
+        }
+
+        startRecording() {
+          try {
+            this.recognition.start();
+            this.isRecording = true;
+            this.recordButton.textContent = "Stop Recording";
+            this.recordButton.classList.add("active");
+            this.status.textContent = "Recording...";
+          } catch (error) {
+            console.error("Error starting recording:", error);
+            this.status.textContent =
+              "Error starting recording. Please check microphone permissions.";
+          }
+        }
+
+        stopRecording() {
+          this.recognition.stop();
+          this.isRecording = false;
+          this.recordButton.textContent = "Start Recording";
+          this.recordButton.classList.remove("active");
+          this.status.textContent = "Recording stopped";
+
+          const interimElement = document.getElementById("interim");
+          if (interimElement) {
+            interimElement.remove();
+          }
+        }
+
+        addMessage(text, sender) {
+          const messageDiv = document.createElement("div");
+          messageDiv.className = `message ${sender}-message`;
+          messageDiv.textContent = text;
+          this.conversation.appendChild(messageDiv);
+          messageDiv.scrollIntoView({ behavior: "smooth" });
+        }
+
+        updateInterimText(text) {
+          let interimElement = document.getElementById("interim");
+          if (!interimElement) {
+            interimElement = document.createElement("div");
+            interimElement.id = "interim";
+            interimElement.className = "message user-message interim";
+            this.conversation.appendChild(interimElement);
+          }
+          interimElement.textContent = text;
+          interimElement.scrollIntoView({ behavior: "smooth" });
+        }
+      }
+
+      // Initialize the app when the page loads
+      document.addEventListener("DOMContentLoaded", () => {
+        new VoiceChatApp();
+      });
+    </script>
+  </body>
+</html>
