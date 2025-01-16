@@ -10,9 +10,11 @@ from openai import OpenAI
 from typing import Dict, Optional
 import PyPDF2
 import io
-from config import ELEVEN_LABS_API_KEY, OPENAI_API_KEY
+# from config import ELEVEN_LABS_API_KEY, OPENAI_API_KEY
 
 app = FastAPI()
+ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 # Add CORS middleware
 app.add_middleware(
@@ -83,7 +85,7 @@ Objectives:
     - Present relevant solutions
     - Schedule consultation meeting
 
-    Guidelines:
+    Strict Guidelines:
     - Keep responses under 3 sentences
     - Focus on business challenges
     - Guide toward consultation
