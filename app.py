@@ -305,28 +305,33 @@ async def websocket_endpoint(websocket: WebSocket):
     connection_id = str(id(websocket))
     
     try:
-        # Create a new AI SalesAgent instance with the current sales prompt
         ai_agents[connection_id] = AI_SalesAgent(system_prompt=current_sales_prompt)
         print(f"Created new AI agent for connection {connection_id} with current sales prompt")
 
+        # **Send the initial greeting audio directly**
+        greeting = "Hi there! I’m an AI Agent from Toshal Infotech. I’d love to take a moment to talk about some exciting services we offer that might be helpful for you. Is now a good time?"
+        
+        audio_data = generate(
+            api_key=ELEVEN_LABS_API_KEY,
+            text=greeting,
+            voice="Aria",
+            model="eleven_monolingual_v1"
+        )
+        
+        await websocket.send_json({
+            "type": "ai_response",
+            "text": greeting,
+            "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None
+        })
+
+        # **Wait for user response**
         while True:
             data = await websocket.receive_json()
             print(f"Received WebSocket data: {json.dumps(data, indent=2)}")
             
             ai_agent = ai_agents[connection_id]
             
-            if data["action"] == "start":
-                greeting = "Hello! I'm your AI sales assistant. How can I help you today?"
-                response_text, response_audio = await ai_agent.generate_response(greeting)
-                print(f"Sending initial greeting: {response_text}")
-                
-                await websocket.send_json({
-                    "type": "ai_response",
-                    "text": response_text,
-                    "audio": base64.b64encode(response_audio).decode('utf-8') if response_audio else None
-                })
-            
-            elif data["action"] == "message":
+            if data["action"] == "message":
                 print(f"Processing message: {data['text']}")
                 response_text, response_audio = await ai_agent.generate_response(data["text"])
                 
@@ -346,6 +351,11 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error for connection {connection_id}: {str(e)}")
         if connection_id in ai_agents:
             del ai_agents[connection_id]
+
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    with open("index.html") as f:
+        return f.read()
 
 if __name__ == "__main__":
     import uvicorn
