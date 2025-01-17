@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, File, UploadFile, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import json
@@ -25,8 +25,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables
-
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+@app.get("/")
+async def read_index():
+    return FileResponse('index.html')
 
 class PDFProcessor:
     def __init__(self, api_key):
