@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, File, UploadFile, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import json
@@ -10,12 +10,21 @@ from openai import OpenAI
 from typing import Dict, Optional
 import PyPDF2
 import io
-# from config import ELEVEN_LABS_API_KEY, OPENAI_API_KEY
+from config import ELEVEN_LABS_API_KEY, OPENAI_API_KEY
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+from dataclasses import dataclass
+from typing import List
 
 app = FastAPI()
-ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
+@dataclass
+class RetrievalResult:
+    chunks: List[str]
+    similarities: List[float]
+    sources: List[str]
+    page_numbers: List[int]
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -25,11 +34,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
-@app.get("/")
-async def read_index():
-    return FileResponse('index.html')
+# Global variables
+
 
 class PDFProcessor:
     def __init__(self, api_key):
@@ -165,7 +171,6 @@ After each response, include entity tracking in this format:
 
 class AI_SalesAgent:
     def __init__(self, system_prompt=None):
-        # Use the provided prompt or fall back to the global current_sales_prompt
         self.system_prompt = system_prompt or current_sales_prompt
         print(f"Initializing AI agent with prompt: {self.system_prompt[:200]}...")
         
@@ -177,15 +182,82 @@ class AI_SalesAgent:
             "requirements": [], "meeting_date": None,
             "meeting_time": None, "industry": None
         }
+        
+        # Initialize RAG components
+        self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
+        self.documents = []
+        self.embeddings = []
+        self.sources = []
+        self.page_numbers = []
+    
+    def create_chunks(self, text: str, source: str, page_number: int, chunk_size: int = 300):
+        """Create chunks from text"""
+        sentences = text.split('. ')
+        current_chunk = []
+        current_length = 0
+        
+        for sentence in sentences:
+            sentence = sentence.strip() + '. '
+            sentence_length = len(sentence)
+            
+            if current_length + sentence_length > chunk_size and current_chunk:
+                chunk_text = ' '.join(current_chunk)
+                self.documents.append(chunk_text)
+                self.sources.append(source)
+                self.page_numbers.append(page_number)
+                current_chunk = [sentence]
+                current_length = sentence_length
+            else:
+                current_chunk.append(sentence)
+                current_length += sentence_length
+        
+        if current_chunk:
+            chunk_text = ' '.join(current_chunk)
+            self.documents.append(chunk_text)
+            self.sources.append(source)
+            self.page_numbers.append(page_number)
+            
+        self.embeddings = self.encoder.encode(self.documents)
+
+    def retrieve_relevant_chunks(self, query: str, k: int = 3) -> RetrievalResult:
+        """Retrieve relevant chunks"""
+        if not self.documents:
+            return RetrievalResult([], [], [], [])
+            
+        query_embedding = self.encoder.encode([query])[0]
+        similarities = cosine_similarity([query_embedding], self.embeddings)[0]
+        
+        top_k_indices = np.argsort(similarities)[-k:][::-1]
+        
+        return RetrievalResult(
+            chunks=[self.documents[i] for i in top_k_indices],
+            similarities=[similarities[i] for i in top_k_indices],
+            sources=[self.sources[i] for i in top_k_indices],
+            page_numbers=[self.page_numbers[i] for i in top_k_indices]
+        )
+
 
     async def generate_response(self, user_input: str) -> tuple[str, bytes]:
         print(f"Generating response for input: {user_input}")
         try:
-            self.conversation_history.append({"role": "user", "content": user_input})
-            print("Current conversation history:", json.dumps(self.conversation_history, indent=2))
+            # Retrieve relevant chunks using RAG
+            retrieved = self.retrieve_relevant_chunks(user_input)
+            context = "\n".join([f"Context {i+1}: {chunk}" 
+                               for i, chunk in enumerate(retrieved.chunks)])
+            
+            # Add context to the conversation
+            enhanced_input = f"""User Input: {user_input}
+
+Retrieved Context:
+{context}
+
+Current Entities Tracked:
+{json.dumps(self.client_entities, indent=2)}"""
+
+            self.conversation_history.append({"role": "user", "content": enhanced_input})
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-2024-08-06",  # Updated to use gpt-4o model
                 messages=self.conversation_history,
                 temperature=0.7,
                 max_tokens=150
@@ -282,10 +354,12 @@ async def upload_knowledge(file: UploadFile = File(...)):
         current_sales_prompt = sales_prompt
         print("Successfully processed PDF and created sales prompt")
         
-        # Update existing AI agents with new prompt
+        # Update existing AI agents with new prompt and RAG content
         for agent in ai_agents.values():
             agent.system_prompt = current_sales_prompt
             agent.conversation_history = [{"role": "system", "content": current_sales_prompt}]
+            # Process the PDF text for RAG
+            agent.create_chunks(pdf_text, file.filename, 1)
         
         return JSONResponse({
             "status": "success",
@@ -308,28 +382,33 @@ async def websocket_endpoint(websocket: WebSocket):
     connection_id = str(id(websocket))
     
     try:
-        # Create a new AI SalesAgent instance with the current sales prompt
         ai_agents[connection_id] = AI_SalesAgent(system_prompt=current_sales_prompt)
         print(f"Created new AI agent for connection {connection_id} with current sales prompt")
 
+        # **Send the initial greeting audio directly**
+        greeting = "Hi there! I’m an AI Agent from Toshal Infotech. I’d love to take a moment to talk about some exciting services we offer that might be helpful for you. Is now a good time?"
+        
+        audio_data = generate(
+            api_key=ELEVEN_LABS_API_KEY,
+            text=greeting,
+            voice="Aria",
+            model="eleven_monolingual_v1"
+        )
+        
+        await websocket.send_json({
+            "type": "ai_response",
+            "text": greeting,
+            "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None
+        })
+
+        # **Wait for user response**
         while True:
             data = await websocket.receive_json()
             print(f"Received WebSocket data: {json.dumps(data, indent=2)}")
             
             ai_agent = ai_agents[connection_id]
             
-            if data["action"] == "start":
-                greeting = "Hello! I'm your AI sales assistant. How can I help you today?"
-                response_text, response_audio = await ai_agent.generate_response(greeting)
-                print(f"Sending initial greeting: {response_text}")
-                
-                await websocket.send_json({
-                    "type": "ai_response",
-                    "text": response_text,
-                    "audio": base64.b64encode(response_audio).decode('utf-8') if response_audio else None
-                })
-            
-            elif data["action"] == "message":
+            if data["action"] == "message":
                 print(f"Processing message: {data['text']}")
                 response_text, response_audio = await ai_agent.generate_response(data["text"])
                 
@@ -349,6 +428,11 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error for connection {connection_id}: {str(e)}")
         if connection_id in ai_agents:
             del ai_agents[connection_id]
+
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    with open("index.html") as f:
+        return f.read()
 
 if __name__ == "__main__":
     import uvicorn

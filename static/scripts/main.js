@@ -62,7 +62,7 @@ class VoiceChatApp {
 
       try {
         const response = await fetch(
-          "https://callassistify.onrender.com/upload_knowledge",
+          "/upload_knowledge",
           {
             method: "POST",
             body: formData,
@@ -151,7 +151,7 @@ class VoiceChatApp {
     }
 
     initializeWebSocket() {
-      this.ws = new WebSocket("wss://callassistify.onrender.com/ws");
+        this.ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
 
       this.ws.onopen = () => {
         this.ws.send(JSON.stringify({ action: "start" }));
