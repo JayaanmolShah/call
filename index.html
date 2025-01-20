@@ -189,7 +189,7 @@
 
           try {
             const response = await fetch(
-              "http://127.0.0.1:8000/upload_knowledge",
+              "https://callassistify.onrender.com/upload_knowledge",
               {
                 method: "POST",
                 body: formData,
@@ -278,10 +278,10 @@
         }
 
         initializeWebSocket() {
-          this.ws = new WebSocket("ws://127.0.0.1:8000/ws");
+          this.ws = new WebSocket("wss://callassistify.onrender.com/ws");
 
           this.ws.onopen = () => {
-            console.log("WebSocket connection established");
+            this.ws.send(JSON.stringify({ action: "start" }));
           };
 
           this.ws.onmessage = async (event) => {
@@ -315,15 +315,6 @@
 
         startRecording() {
           try {
-            // First, send the start_recording action to trigger the greeting
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-              this.ws.send(
-                JSON.stringify({
-                  action: "start_recording",
-                })
-              );
-            }
-
             this.recognition.start();
             this.isRecording = true;
             this.recordButton.textContent = "Stop Recording";

@@ -7,15 +7,14 @@ import base64
 from elevenlabs import generate
 import os
 from openai import OpenAI
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import PyPDF2
 import io
+# from config import ELEVEN_LABS_API_KEY, OPENAI_API_KEY
 
-END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
-    "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
 app = FastAPI()
-ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY") 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") 
+ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 # Add CORS middleware
 app.add_middleware(
@@ -160,6 +159,7 @@ After each response, include entity tracking in this format:
             print(f"Error structuring company info: {str(e)}")
             return None
 
+
 class AI_SalesAgent:
     def __init__(self, system_prompt=None):
         # Use the provided prompt or fall back to the global current_sales_prompt
@@ -169,31 +169,15 @@ class AI_SalesAgent:
         self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
         self.elevenlabs_api_key = ELEVEN_LABS_API_KEY
         self.conversation_history = [{"role": "system", "content": self.system_prompt}]
-        self.end_call_detected = False
         self.client_entities = {
             "name": None, "email": None, "company_name": None,
             "requirements": [], "meeting_date": None,
             "meeting_time": None, "industry": None
         }
 
-    def check_for_end_call(self, text: str) -> bool:
-        """Check if the input contains any end call phrases"""
-        return any(phrase.lower() in text.lower() for phrase in END_CALL_PHRASES)
-
     async def generate_response(self, user_input: str) -> tuple[str, bytes]:
         print(f"Generating response for input: {user_input}")
         try:
-            if self.check_for_end_call(user_input):
-                self.end_call_detected = True
-                farewell = "Thank you for your time. Have a great day! Goodbye!"
-                audio_data = generate(
-                    api_key=self.elevenlabs_api_key,
-                    text=farewell,
-                    voice="Aria",
-                    model="eleven_monolingual_v1"
-                )
-                return farewell, audio_data, True
-            
             self.conversation_history.append({"role": "user", "content": user_input})
             print("Current conversation history:", json.dumps(self.conversation_history, indent=2))
 
@@ -222,7 +206,7 @@ class AI_SalesAgent:
             print("Audio response generated successfully")
 
             self.conversation_history.append({"role": "assistant", "content": spoken_response})
-            return response_text, audio_data, self.end_call_detected
+            return spoken_response, audio_data
 
         except Exception as e:
             print(f"Error generating response: {str(e)}")
@@ -324,45 +308,40 @@ async def websocket_endpoint(websocket: WebSocket):
         ai_agents[connection_id] = AI_SalesAgent(system_prompt=current_sales_prompt)
         print(f"Created new AI agent for connection {connection_id} with current sales prompt")
 
+        # **Send the initial greeting audio directly**
+        greeting = "Hi there! I’m an AI Agent from Toshal Infotech. I’d love to take a moment to talk about some exciting services we offer that might be helpful for you. Is now a good time?"
+        
+        audio_data = generate(
+            api_key=ELEVEN_LABS_API_KEY,
+            text=greeting,
+            voice="Aria",
+            model="eleven_monolingual_v1"
+        )
+        
+        await websocket.send_json({
+            "type": "ai_response",
+            "text": greeting,
+            "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None
+        })
+
+        # **Wait for user response**
         while True:
             data = await websocket.receive_json()
             print(f"Received WebSocket data: {json.dumps(data, indent=2)}")
             
             ai_agent = ai_agents[connection_id]
             
-            if data["action"] == "start_recording":
-                greeting = "Hi there! I'm an AI Agent from Toshal Infotech. I'd love to take a moment to talk about some exciting services we offer that might be helpful for you. Is now a good time?"
-                audio_data = generate(
-                    api_key=ELEVEN_LABS_API_KEY,
-                    text=greeting,
-                    voice="Aria",
-                    model="eleven_monolingual_v1"
-                )
-                
-                await websocket.send_json({
-                    "type": "ai_response",
-                    "text": greeting,
-                    "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None
-                })
-            
             if data["action"] == "message":
                 print(f"Processing message: {data['text']}")
-                response_text, response_audio, end_call = await ai_agent.generate_response(data["text"])
+                response_text, response_audio = await ai_agent.generate_response(data["text"])
                 
                 if response_text:
                     print(f"Sending response: {response_text}")
                     await websocket.send_json({
                         "type": "ai_response",
                         "text": response_text,
-                        "audio": base64.b64encode(response_audio).decode('utf-8') if response_audio else None,
-                        "end_call": end_call
+                        "audio": base64.b64encode(response_audio).decode('utf-8') if response_audio else None
                     })
-                    
-                    if end_call:
-                        await websocket.close()
-                        if connection_id in ai_agents:
-                            del ai_agents[connection_id]
-                        break
 
     except WebSocketDisconnect:
         print(f"WebSocket disconnected for connection {connection_id}")
