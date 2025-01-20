@@ -14,8 +14,8 @@ import io
 END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
     "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
 app = FastAPI()
-ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY") or "sk_96a4eaaef44343bc35f03b278a39cc89e7fba8a2313d79b7"
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or "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"
+ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY") 
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") 
 
 # Add CORS middleware
 app.add_middleware(
