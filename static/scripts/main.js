@@ -62,7 +62,7 @@ class VoiceChatApp {
 
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/upload_knowledge",
+        "/upload_knowledge",
         {
           method: "POST",
           body: formData,
@@ -151,7 +151,7 @@ class VoiceChatApp {
   }
 
   initializeWebSocket() {
-    this.ws = new WebSocket("ws://127.0.0.1:8000/ws");
+    this.ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
 
     this.ws.onopen = () => {
       console.log("WebSocket connection established");
