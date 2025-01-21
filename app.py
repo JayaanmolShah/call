@@ -10,6 +10,7 @@ from openai import OpenAI
 from typing import Dict, Optional, List
 import PyPDF2
 import io
+from datetime import datetime
 
 END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
     "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
@@ -106,7 +107,10 @@ After each response, include entity tracking in this format:
         "meeting_time": "identified time or null",
         "industry": "identified industry or null"
     }}
-}}"""
+}}
+Consider today's date as {datetime.now().strftime("%d-%m-%Y")} and time as {datetime.now().strftime("%I:%M %p")}.
+If user not specified date but say "Tommorrow", "Day After Tommorrow", "Next <DAY_NAME>", "This <DAY_NAME>" then set date according from Today's date ({datetime.now()}) and save in "DD-MM-YYYY" Format.
+"""
             print("Generated prompt:", prompt)
             return prompt
             
