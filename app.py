@@ -58,11 +58,11 @@ class PDFProcessor:
             return None
 
     def create_sales_prompt(self, company_info: dict) -> str:
-        """Create sales prompt from structured company information"""
         try:
             print("Creating sales prompt from structured info:", json.dumps(company_info, indent=2))
             
-            prompt = f"""You are an AI sales agent for {company_info['company_name']}. 
+            prompt = f"""You are an outbound AI sales agent for {company_info['company_name']}. 
+You've already introduced yourself at the start of the call, so don't introduce yourself again. And Don't say Hello or Hi etc..
 Your role is to understand client needs and guide them toward our solutions.
 
 Available Services:
@@ -74,24 +74,25 @@ Key Points:
 {self._format_points(company_info['unique_selling_points'])}
 
 Objectives:
-    - Must Gather client information(E-mail,Name,Company name)
-    - Understand requirements
-    - Match with services
-    - Must try to Schedule consultation
-    - Must not talk about prices unless asked for it by the user.    
+- Must Gather client information(E-mail,Name,Company name)
+- Understand requirements
+- Match with services
+- Must try to Schedule consultation
+- Must not talk about prices unless asked for it by the user.    
 
-    Conversation Flow:
-    - Introduction and rapport building
-    - Understand client's business and challenges
-    - Present relevant solutions
-    - Schedule consultation meeting
+Conversation Flow:
+- Focus on understanding client's business and challenges
+- Present relevant solutions
+- Schedule consultation meeting
 
-    Strict Guidelines:
-    - Keep responses under 3 sentences
-    - Focus on business challenges
-    - Guide toward consultation
-    - No technical details unless asked
-    - Persuade client and pitch your services, even if the client shows disinterest in the services.
+Strict Guidelines:
+- Keep responses under 3 sentences
+- Focus on business challenges
+- Guide toward consultation
+- No technical details unless asked
+- Persuade client and pitch your services, even if the client shows disinterest
+- Never introduce yourself again as you've already done so
+- For end call requests, ask "Would you like to end our conversation?" and only end if confirmed
 
 After each response, include entity tracking in this format:
 [[ENTITIES]]
@@ -170,6 +171,7 @@ class AI_SalesAgent:
         self.elevenlabs_api_key = ELEVEN_LABS_API_KEY
         self.conversation_history = [{"role": "system", "content": self.system_prompt}]
         self.end_call_detected = False
+        self.end_call_confirmed = False
         self.client_entities = {
             "name": None, "email": None, "company_name": None,
             "requirements": [], "meeting_date": None,
@@ -183,8 +185,8 @@ class AI_SalesAgent:
     async def generate_response(self, user_input: str) -> tuple[str, bytes]:
         print(f"Generating response for input: {user_input}")
         try:
-            if self.check_for_end_call(user_input):
-                self.end_call_detected = True
+            if self.end_call_detected and ("yes" in user_input.lower() or "okay" in user_input.lower() or "sure" in user_input.lower()):
+                self.end_call_confirmed = True
                 farewell = "Thank you for your time. Have a great day! Goodbye!"
                 audio_data = generate(
                     api_key=self.elevenlabs_api_key,
@@ -194,11 +196,27 @@ class AI_SalesAgent:
                 )
                 return farewell, audio_data, True
             
+            # Set end_call_detected flag if end call phrase detected
+            if self.check_for_end_call(user_input) and not self.end_call_detected:
+                self.end_call_detected = True
+                confirmation_msg = "Would you like to end our conversation?"
+                audio_data = generate(
+                    api_key=self.elevenlabs_api_key,
+                    text=confirmation_msg,
+                    voice="Aria",
+                    model="eleven_monolingual_v1"
+                )
+                return confirmation_msg, audio_data, False
+            
+             # Reset end_call_detected if user continues conversation
+            if self.end_call_detected and ("no" in user_input.lower() or "continue" in user_input.lower()):
+                self.end_call_detected = False
+            
             self.conversation_history.append({"role": "user", "content": user_input})
             print("Current conversation history:", json.dumps(self.conversation_history, indent=2))
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=self.conversation_history,
                 temperature=0.7,
                 max_tokens=150
@@ -331,7 +349,7 @@ async def websocket_endpoint(websocket: WebSocket):
             ai_agent = ai_agents[connection_id]
             
             if data["action"] == "start_recording":
-                greeting = "Hi there! I'm an AI Agent from Toshal Infotech. I'd love to take a moment to talk about some exciting services we offer that might be helpful for you. Is now a good time?"
+                greeting = "Hello! I'm calling from Toshal Infotech. I'd love to discuss how our services could benefit your business. Is this a good time to talk?"
                 audio_data = generate(
                     api_key=ELEVEN_LABS_API_KEY,
                     text=greeting,
