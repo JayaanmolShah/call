@@ -390,7 +390,7 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error for connection {connection_id}: {str(e)}")
         if connection_id in ai_agents:
             del ai_agents[connection_id]
-
+app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     with open("index.html") as f:
