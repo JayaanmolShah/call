@@ -35,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables
+# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 async def read_index():
