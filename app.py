@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, File, UploadFile, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse,FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import json
@@ -15,10 +15,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from dataclasses import dataclass
 from typing import List
+from datetime import datetime
 
 app = FastAPI()
 ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
+    "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
 
 @dataclass
 class RetrievalResult:
@@ -26,6 +30,7 @@ class RetrievalResult:
     similarities: List[float]
     sources: List[str]
     page_numbers: List[int]
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -70,11 +75,11 @@ class PDFProcessor:
             return None
 
     def create_sales_prompt(self, company_info: dict) -> str:
-        """Create sales prompt from structured company information"""
         try:
             print("Creating sales prompt from structured info:", json.dumps(company_info, indent=2))
             
             prompt = f"""You are an AI sales agent for {company_info['company_name']}. 
+You've already introduced yourself at the start of the call, so don't introduce yourself again. And Don't say Hello or Hi etc..
 Your role is to understand client needs and guide them toward our solutions.
 
 Available Services:
@@ -86,24 +91,23 @@ Key Points:
 {self._format_points(company_info['unique_selling_points'])}
 
 Objectives:
-    - Must Gather client information(E-mail,Name,Company name)
-    - Understand requirements
-    - Match with services
-    - Must try to Schedule consultation
-    - Must not talk about prices unless asked for it by the user.    
+- Must Gather client information(E-mail,Name,Company name)
+- Understand requirements
+- Match with services
+- Must try to Schedule consultation
+- Must not talk about prices unless asked for it by the user.    
 
-    Conversation Flow:
-    - Introduction and rapport building
-    - Understand client's business and challenges
-    - Present relevant solutions
-    - Schedule consultation meeting
+Conversation Flow:
+- Focus on understanding client's business and challenges
+- Present relevant solutions
+- Schedule consultation meeting
 
-    Strict Guidelines:
-    - Keep responses under 3 sentences
-    - Focus on business challenges
-    - Guide toward consultation
-    - No technical details unless asked
-    - Persuade client and pitch your services, even if the client shows disinterest in the services.
+Strict Guidelines:
+- Keep responses under 3 sentences
+- Focus on business challenges
+- Guide toward consultation
+- No technical details unless asked
+- Persuade client and pitch your services, even if the client shows disinterest
 
 After each response, include entity tracking in this format:
 [[ENTITIES]]
@@ -117,7 +121,10 @@ After each response, include entity tracking in this format:
         "meeting_time": "identified time or null",
         "industry": "identified industry or null"
     }}
-}}"""
+}}
+Consider today's date as {datetime.now().strftime("%d-%m-%Y")} and time as {datetime.now().strftime("%I:%M %p")}.
+If user not specified date but say "Tomorrow", "Day After Tomorrow", "Next <DAY_NAME>", "This <DAY_NAME>" then set date according from Today's date ({datetime.now()}) and save in "DD-MM-YYYY" Format."""
+
             print("Generated prompt:", prompt)
             return prompt
             
@@ -172,7 +179,6 @@ After each response, include entity tracking in this format:
             print(f"Error structuring company info: {str(e)}")
             return None
 
-
 class AI_SalesAgent:
     def __init__(self, system_prompt=None):
         self.system_prompt = system_prompt or current_sales_prompt
@@ -186,6 +192,8 @@ class AI_SalesAgent:
             "requirements": [], "meeting_date": None,
             "meeting_time": None, "industry": None
         }
+        self.end_call_detected = False
+        self.end_call_confirmed = False
         
         # Initialize RAG components
         self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
@@ -193,7 +201,11 @@ class AI_SalesAgent:
         self.embeddings = []
         self.sources = []
         self.page_numbers = []
-    
+
+    def check_for_end_call(self, text: str) -> bool:
+        """Check if the input contains any end call phrases"""
+        return any(phrase.lower() in text.lower() for phrase in END_CALL_PHRASES)
+
     def create_chunks(self, text: str, source: str, page_number: int, chunk_size: int = 300):
         """Create chunks from text"""
         sentences = text.split('. ')
@@ -240,10 +252,37 @@ class AI_SalesAgent:
             page_numbers=[self.page_numbers[i] for i in top_k_indices]
         )
 
-
-    async def generate_response(self, user_input: str) -> tuple[str, bytes]:
+    async def generate_response(self, user_input: str) -> tuple[str, bytes, bool]:
         print(f"Generating response for input: {user_input}")
         try:
+            # Handle end call confirmation
+            if self.end_call_detected and ("yes" in user_input.lower() or "okay" in user_input.lower() or "sure" in user_input.lower()):
+                self.end_call_confirmed = True
+                farewell = "Thank you for your time. Have a great day! Goodbye!"
+                audio_data = generate(
+                    api_key=self.elevenlabs_api_key,
+                    text=farewell,
+                    voice="Aria",
+                    model="eleven_monolingual_v1"
+                )
+                return farewell, audio_data, True
+            
+            # Check for end call request
+            if self.check_for_end_call(user_input) and not self.end_call_detected:
+                self.end_call_detected = True
+                confirmation_msg = "Would you like to end our conversation?"
+                audio_data = generate(
+                    api_key=self.elevenlabs_api_key,
+                    text=confirmation_msg,
+                    voice="Aria",
+                    model="eleven_monolingual_v1"
+                )
+                return confirmation_msg, audio_data, False
+            
+            # Reset end_call_detected if user continues conversation
+            if self.end_call_detected and ("no" in user_input.lower() or "continue" in user_input.lower()):
+                self.end_call_detected = False
+
             # Retrieve relevant chunks using RAG
             retrieved = self.retrieve_relevant_chunks(user_input)
             context = "\n".join([f"Context {i+1}: {chunk}" 
@@ -261,7 +300,7 @@ Current Entities Tracked:
             self.conversation_history.append({"role": "user", "content": enhanced_input})
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-2024-08-06",  # Updated to use gpt-4o model
+                model="gpt-4o",
                 messages=self.conversation_history,
                 temperature=0.7,
                 max_tokens=150
@@ -280,16 +319,16 @@ Current Entities Tracked:
                 api_key=self.elevenlabs_api_key,
                 text=spoken_response,
                 voice="Aria",
-                model="eleven_monolingual_v1"
+                model="eleven_flash_v2_5"
             )
             print("Audio response generated successfully")
 
             self.conversation_history.append({"role": "assistant", "content": spoken_response})
-            return spoken_response, audio_data
+            return spoken_response, audio_data, self.end_call_detected
 
         except Exception as e:
             print(f"Error generating response: {str(e)}")
-            return None, None
+            return None, None, False
 
     def extract_entities(self, response_text: str) -> tuple[str, Optional[dict]]:
         print("Extracting entities from response:", response_text)
@@ -315,7 +354,6 @@ Current Entities Tracked:
 
 current_sales_prompt = "You are an AI sales agent. Your role is to understand client needs and guide them toward our solutions. Please be professional and courteous."
 ai_agents: Dict[str, AI_SalesAgent] = {}
-
 
 @app.post("/upload_knowledge")
 async def upload_knowledge(file: UploadFile = File(...)):
@@ -386,26 +424,34 @@ async def websocket_endpoint(websocket: WebSocket):
     connection_id = str(id(websocket))
     
     try:
+        # Create new AI agent for this connection
         ai_agents[connection_id] = AI_SalesAgent(system_prompt=current_sales_prompt)
         print(f"Created new AI agent for connection {connection_id} with current sales prompt")
 
-        # **Send the initial greeting audio directly**
-        greeting = "Hi there! I’m an AI Agent from Toshal Infotech. I’d love to take a moment to talk about some exciting services we offer that might be helpful for you. Is now a good time?"
-        
+        # Send initial greeting and add to conversation history
+        greeting = "Hello! I'm calling from Toshal Infotech. I'd love to discuss how our services could benefit your business. Is this a good time to talk?"
         audio_data = generate(
             api_key=ELEVEN_LABS_API_KEY,
             text=greeting,
             voice="Aria",
-            model="eleven_monolingual_v1"
+            model="eleven_flash_v2_5"
         )
         
+        # Add greeting to conversation history
+        ai_agents[connection_id].conversation_history.append({
+            "role": "assistant", 
+            "content": greeting
+        })
+        
+        # Send greeting to client
         await websocket.send_json({
             "type": "ai_response",
             "text": greeting,
-            "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None
+            "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None,
+            "end_call": False
         })
 
-        # **Wait for user response**
+        # Main conversation loop
         while True:
             data = await websocket.receive_json()
             print(f"Received WebSocket data: {json.dumps(data, indent=2)}")
@@ -414,15 +460,22 @@ async def websocket_endpoint(websocket: WebSocket):
             
             if data["action"] == "message":
                 print(f"Processing message: {data['text']}")
-                response_text, response_audio = await ai_agent.generate_response(data["text"])
+                response_text, response_audio, end_call = await ai_agent.generate_response(data["text"])
                 
                 if response_text:
                     print(f"Sending response: {response_text}")
                     await websocket.send_json({
                         "type": "ai_response",
                         "text": response_text,
-                        "audio": base64.b64encode(response_audio).decode('utf-8') if response_audio else None
+                        "audio": base64.b64encode(response_audio).decode('utf-8') if response_audio else None,
+                        "end_call": end_call
                     })
+                    
+                    if end_call:
+                        await websocket.close()
+                        if connection_id in ai_agents:
+                            del ai_agents[connection_id]
+                        break
 
     except WebSocketDisconnect:
         print(f"WebSocket disconnected for connection {connection_id}")
@@ -432,11 +485,6 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error for connection {connection_id}: {str(e)}")
         if connection_id in ai_agents:
             del ai_agents[connection_id]
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    with open("index.html") as f:
-        return f.read()
 
 if __name__ == "__main__":
     import uvicorn
