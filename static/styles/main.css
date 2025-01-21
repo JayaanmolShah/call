@@ -163,7 +163,7 @@ body {
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   padding: 25px 30px;
   width: 450px;
-  height: 450px;
+  height: 495px;
   text-align: center;
 }
 
@@ -188,7 +188,7 @@ body {
   color: #888;
   text-align: center;
   cursor: pointer;
-  height: 20px;
+  height: 50px;
 }
 
 .file-upload:hover {
@@ -239,12 +239,12 @@ select:focus {
 }
 
 .button.record {
-  background-color: #6f42c1;
-  color: #fff;
+  background-color: #d1ecf1;
+  color: black;
 }
 
 .button.record:disabled {
-  background-color: #6c757d;
+  background-color: #d1ecf1;
 }
 
 .button.record:hover:enabled {
@@ -252,8 +252,8 @@ select:focus {
 }
 
 .button.cut-call {
-  background-color: #dc3545;
-  color: #fff;
+  background-color: #f8d7da;
+  color: black;
 }
 
 .button.cut-call:hover {
@@ -291,7 +291,5 @@ select:focus {
 }
 
 .upload-status {
-  margin-top: 10px;
-  font-size: 0.85em;
-  color: #777;
+  color: green;
 }

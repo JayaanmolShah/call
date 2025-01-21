@@ -73,7 +73,7 @@ class VoiceChatApp {
 
       if (result.status === "success") {
         this.updateUploadStatus(
-          "Knowledge base uploaded successfully!",
+          "Knowledge base uploaded successfull✅!",
           "success"
         );
         this.recordButton.disabled = false;

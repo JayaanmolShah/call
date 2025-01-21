@@ -14,14 +14,16 @@
         <option value="Option 2">Option 2</option>
         <option value="Option 3">Option 3</option>
       </select>
-      <div id="status" class="status">
-        Please upload a PDF knowledge base to begin
-      </div>
+      
       <div id="fileUpload" class="file-upload">
         <input type="file" id="pdfInput" accept=".pdf" style="display: none" />
         <label for="pdfInput" style="cursor: pointer">
           Upload PDF Knowledge Base (Required)
+          <div id="status" class="status">
+            Please upload a PDF knowledge base to begin
+          </div>
         </label>
+       
         <div id="uploadStatus" class="upload-status"></div>
       </div>
       <div id="conversation" class="conversation">
