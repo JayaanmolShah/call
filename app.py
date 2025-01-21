@@ -10,7 +10,6 @@ from openai import OpenAI
 from typing import Dict, Optional
 import PyPDF2
 import io
-from config import ELEVEN_LABS_API_KEY, OPENAI_API_KEY
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
@@ -18,6 +17,8 @@ from dataclasses import dataclass
 from typing import List
 
 app = FastAPI()
+ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 @dataclass
 class RetrievalResult:
