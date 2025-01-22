@@ -11,12 +11,21 @@ from typing import Dict, Optional, List
 import PyPDF2
 import io
 from datetime import datetime
+from dotenv import load_dotenv
+
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import asyncio
+from queue import Queue
+
+load_dotenv()
+
+ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
     "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
 app = FastAPI()
-ELEVEN_LABS_API_KEY = ""
-OPENAI_API_KEY = ""
 
 # Add CORS middleware
 app.add_middleware(
@@ -27,8 +36,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variables
-
+class AudioStreamManager:
+    def __init__(self):
+        self.current_stream: Optional[Any] = None
+        self.stream_lock = asyncio.Lock()
+        self.should_stop = threading.Event()
+    
+    async def start_new_stream(self, audio_data: bytes):
+        async with self.stream_lock:
+            if self.current_stream:
+                self.should_stop.set()
+                # Wait for current stream to finish
+                await asyncio.sleep(0.1)
+            
+            self.should_stop.clear()
+            self.current_stream = audio_data
+    
+    async def stop_current_stream(self):
+        async with self.stream_lock:
+            if self.current_stream:
+                self.should_stop.set()
+                self.current_stream = None
 
 class PDFProcessor:
     def __init__(self, api_key):
@@ -62,7 +90,7 @@ class PDFProcessor:
         try:
             print("Creating sales prompt from structured info:", json.dumps(company_info, indent=2))
             
-            prompt = f"""You are an outbound AI sales agent for {company_info['company_name']}. 
+            prompt = f"""You are an outbound AI sales agent for {company_info['company_name']}.
 You've already introduced yourself at the start of the call, so don't introduce yourself again. And Don't say Hello or Hi etc..
 Your role is to understand client needs and guide them toward our solutions.
 
@@ -85,6 +113,7 @@ Conversation Flow:
 - Focus on understanding client's business and challenges
 - Present relevant solutions
 - Schedule consultation meeting
+- Once all necessary information is gathered, confirm the date and time of the meeting, and ask if the client has any other questions or if the call can be ended.
 
 Strict Guidelines:
 - Keep responses under 3 sentences
@@ -94,6 +123,9 @@ Strict Guidelines:
 - Persuade client and pitch your services, even if the client shows disinterest
 - Never introduce yourself again as you've already done so
 - For end call requests, ask "Would you like to end our conversation?" and only end if confirmed
+
+Example of Final Confirmation:
+"I have all the necessary information to schedule your meeting on "meeting_date" at "meeting_time". Is that perfect for you? Do you have any other questions or should I end the call?"
 
 After each response, include entity tracking in this format:
 [[ENTITIES]]
@@ -164,7 +196,7 @@ If user not specified date but say "Tommorrow", "Day After Tommorrow", "Next <DA
         except Exception as e:
             print(f"Error structuring company info: {str(e)}")
             return None
-
+    pass
 class AI_SalesAgent:
     def __init__(self, system_prompt=None):
         # Use the provided prompt or fall back to the global current_sales_prompt
@@ -181,12 +213,14 @@ class AI_SalesAgent:
             "requirements": [], "meeting_date": None,
             "meeting_time": None, "industry": None
         }
+        self.audio_manager = AudioStreamManager()
+        self.current_response_context = None
 
     def check_for_end_call(self, text: str) -> bool:
         """Check if the input contains any end call phrases"""
         return any(phrase.lower() in text.lower() for phrase in END_CALL_PHRASES)
 
-    async def generate_response(self, user_input: str) -> tuple[str, bytes]:
+    async def generate_response(self, user_input: str, was_interrupted: bool = False) -> tuple[str, bytes, bool]:
         print(f"Generating response for input: {user_input}")
         try:
             if self.end_call_detected and ("yes" in user_input.lower() or "okay" in user_input.lower() or "sure" in user_input.lower()):
@@ -196,9 +230,15 @@ class AI_SalesAgent:
                     api_key=self.elevenlabs_api_key,
                     text=farewell,
                     voice="Aria",
-                    model="eleven_monolingual_v1"
+                    model="eleven_flash_v2_5"
                 )
                 return farewell, audio_data, True
+            
+            if was_interrupted and self.current_response_context:
+                context = f"Previous context: {self.current_response_context}\nNew user input: {user_input}"
+                self.current_response_context = None
+            else:
+                context = user_input
             
             # Set end_call_detected flag if end call phrase detected
             if self.check_for_end_call(user_input) and not self.end_call_detected:
@@ -208,7 +248,7 @@ class AI_SalesAgent:
                     api_key=self.elevenlabs_api_key,
                     text=confirmation_msg,
                     voice="Aria",
-                    model="eleven_monolingual_v1"
+                    model=""
                 )
                 return confirmation_msg, audio_data, False
             
@@ -239,7 +279,7 @@ class AI_SalesAgent:
                 api_key=self.elevenlabs_api_key,
                 text=spoken_response,
                 voice="Aria",
-                model="eleven_monolingual_v1"
+                model="eleven_flash_v2_5"
             )
             print("Audio response generated successfully")
 
@@ -248,7 +288,12 @@ class AI_SalesAgent:
 
         except Exception as e:
             print(f"Error generating response: {str(e)}")
-            return None, None
+            return None, None, False
+
+    async def handle_interruption(self, user_input: str) -> tuple[str, bytes, bool]:
+        """Handle user interruption with context awareness"""
+        await self.audio_manager.stop_current_stream()
+        return await self.generate_response(user_input, was_interrupted=True)
 
     def extract_entities(self, response_text: str) -> tuple[str, Optional[dict]]:
         print("Extracting entities from response:", response_text)
@@ -345,12 +390,11 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         ai_agents[connection_id] = AI_SalesAgent(system_prompt=current_sales_prompt)
         print(f"Created new AI agent for connection {connection_id} with current sales prompt")
+        agent = ai_agents[connection_id]
 
         while True:
             data = await websocket.receive_json()
             print(f"Received WebSocket data: {json.dumps(data, indent=2)}")
-            
-            ai_agent = ai_agents[connection_id]
             
             if data["action"] == "start_recording":
                 greeting = "Hello! I'm calling from Toshal Infotech. I'd love to discuss how our services could benefit your business. Is this a good time to talk?"
@@ -358,7 +402,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     api_key=ELEVEN_LABS_API_KEY,
                     text=greeting,
                     voice="Aria",
-                    model="eleven_monolingual_v1"
+                    model="eleven_flash_v2_5"
                 )
                 
                 await websocket.send_json({
@@ -367,12 +411,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None
                 })
             
-            if data["action"] == "message":
+            # --- NEW: Added user_speaking action handler ---
+            elif data["action"] == "user_speaking":
+                print("User speaking detected, handling interruption...")
+                if agent.current_response_context:
+                    await agent.handle_interruption(data.get("text", ""))
+            
+            elif data["action"] == "message":
                 print(f"Processing message: {data['text']}")
-                response_text, response_audio, end_call = await ai_agent.generate_response(data["text"])
+                response_text, response_audio, end_call = await agent.generate_response(data["text"])
                 
                 if response_text:
-                    print(f"Sending response: {response_text}")
                     await websocket.send_json({
                         "type": "ai_response",
                         "text": response_text,
@@ -394,7 +443,9 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"WebSocket error for connection {connection_id}: {str(e)}")
         if connection_id in ai_agents:
             del ai_agents[connection_id]
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     with open("index.html") as f:
