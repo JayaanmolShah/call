@@ -2,9 +2,7 @@ const voiceDetectionWorkletCode = `
 class VoiceDetectionProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.lastVoiceDetection = 0;
     this.voiceDetectionThreshold = -35; // dB
-    this.debounceTime = 300; // ms
   }
 
   calculateDB(input) {
@@ -21,11 +19,8 @@ class VoiceDetectionProcessor extends AudioWorkletProcessor {
     if (!input) return true;
 
     const currentDB = this.calculateDB(input);
-    const currentTime = currentTime();
 
-    if (currentDB > this.voiceDetectionThreshold && 
-        currentTime - this.lastVoiceDetection > this.debounceTime) {
-      this.lastVoiceDetection = currentTime;
+    if (currentDB > this.voiceDetectionThreshold) {
       this.port.postMessage({ userSpeaking: true });
     }
 
@@ -64,18 +59,24 @@ class VoiceChatApp {
 
   async initializeAudioWorklet() {
     try {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      this.audioContext = new (window.AudioContext ||
+        window.webkitAudioContext)();
       this.audioAnalyser = this.audioContext.createAnalyser();
       this.audioAnalyser.fftSize = 2048;
 
       // Create blob URL for the worklet code
-      const blob = new Blob([voiceDetectionWorkletCode], { type: 'text/javascript' });
+      const blob = new Blob([voiceDetectionWorkletCode], {
+        type: "text/javascript",
+      });
       const workletUrl = URL.createObjectURL(blob);
 
       // Load the worklet
       await this.audioContext.audioWorklet.addModule(workletUrl);
-      this.audioWorklet = new AudioWorkletNode(this.audioContext, 'voice-detection-processor');
-      
+      this.audioWorklet = new AudioWorkletNode(
+        this.audioContext,
+        "voice-detection-processor"
+      );
+
       this.audioWorklet.port.onmessage = (event) => {
         if (event.data.userSpeaking && this.isAgentSpeaking) {
           this.handleUserSpeaking();
@@ -85,7 +86,7 @@ class VoiceChatApp {
       // Clean up the blob URL
       URL.revokeObjectURL(workletUrl);
     } catch (error) {
-      console.error('Error initializing audio worklet:', error);
+      console.error("Error initializing audio worklet:", error);
     }
   }
 
@@ -93,20 +94,20 @@ class VoiceChatApp {
     const fileUpload = document.getElementById("fileUpload");
     const pdfInput = document.getElementById("pdfInput");
 
-    ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
+    ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
       fileUpload.addEventListener(eventName, (e) => {
         e.preventDefault();
         e.stopPropagation();
       });
     });
 
-    ["dragenter", "dragover"].forEach(eventName => {
+    ["dragenter", "dragover"].forEach((eventName) => {
       fileUpload.addEventListener(eventName, () => {
         fileUpload.classList.add("dragover");
       });
     });
 
-    ["dragleave", "drop"].forEach(eventName => {
+    ["dragleave", "drop"].forEach((eventName) => {
       fileUpload.addEventListener(eventName, () => {
         fileUpload.classList.remove("dragover");
       });
@@ -141,9 +142,13 @@ class VoiceChatApp {
       const result = await response.json();
 
       if (result.status === "success") {
-        this.updateUploadStatus("Knowledge base uploaded successfully✅!", "success");
+        this.updateUploadStatus(
+          "Knowledge base uploaded successfully✅!",
+          "success"
+        );
         this.recordButton.disabled = false;
-        this.status.textContent = 'Click "Start Recording" to begin conversation';
+        this.status.textContent =
+          'Click "Start Recording" to begin conversation';
         this.initializeWebSocket();
       } else {
         this.updateUploadStatus(result.message || "Upload failed", "error");
@@ -162,7 +167,8 @@ class VoiceChatApp {
 
   setupSpeechRecognition() {
     if (!("webkitSpeechRecognition" in window)) {
-      this.status.textContent = "Speech recognition is not supported in this browser.";
+      this.status.textContent =
+        "Speech recognition is not supported in this browser.";
       this.recordButton.disabled = true;
       return;
     }
@@ -186,10 +192,12 @@ class VoiceChatApp {
 
       if (finalTranscript) {
         this.addMessage(finalTranscript, "user");
-        this.ws.send(JSON.stringify({
-          action: "message",
-          text: finalTranscript,
-        }));
+        this.ws.send(
+          JSON.stringify({
+            action: "message",
+            text: finalTranscript,
+          })
+        );
       }
 
       if (interimTranscript) {
@@ -210,20 +218,15 @@ class VoiceChatApp {
   }
 
   handleUserSpeaking() {
-    const now = Date.now();
-    if (now - this.lastUserSpeakingTime > this.userSpeakingDebounceTime) {
-      this.lastUserSpeakingTime = now;
-      
-      // Stop current audio playback
-      this.stopCurrentAudio();
-      
-      // Notify server about interruption
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({
-          action: "user_speaking",
-          timestamp: now
-        }));
-      }
+    // Stop current audio playback immediately
+    this.stopCurrentAudio();
+    
+    // Notify server about interruption
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        action: "user_speaking",
+        timestamp: Date.now()
+      }));
     }
   }
 
@@ -248,15 +251,15 @@ class VoiceChatApp {
 
       if (data.type === "ai_response") {
         this.addMessage(data.text, "agent");
-        
+
         if (data.audio) {
           // Stop any currently playing audio
           this.stopCurrentAudio();
-          
+
           // Create and play new audio
           const audio = new Audio("data:audio/wav;base64," + data.audio);
           this.currentAudio = audio;
-          
+
           // Set up audio interruption handling
           audio.addEventListener('play', () => {
             this.isAgentSpeaking = true;
@@ -268,11 +271,11 @@ class VoiceChatApp {
             this.currentAudio = null;
             this.status.textContent = 'Recording...';
           });
-          
+
           try {
             await audio.play();
           } catch (error) {
-            console.error('Error playing audio:', error);
+            console.error("Error playing audio:", error);
           }
         }
       }
@@ -288,8 +291,9 @@ class VoiceChatApp {
     try {
       // Initialize audio stream for voice detection
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaStreamSource = this.audioContext.createMediaStreamSource(stream);
-      
+      const mediaStreamSource =
+        this.audioContext.createMediaStreamSource(stream);
+
       // Connect audio processing chain
       mediaStreamSource
         .connect(this.audioAnalyser)
@@ -297,14 +301,16 @@ class VoiceChatApp {
         .connect(this.audioContext.destination);
 
       // Resume audio context if it was suspended
-      if (this.audioContext.state === 'suspended') {
+      if (this.audioContext.state === "suspended") {
         await this.audioContext.resume();
       }
 
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({
-          action: "start_recording"
-        }));
+        this.ws.send(
+          JSON.stringify({
+            action: "start_recording",
+          })
+        );
       }
 
       this.recognition.start();
@@ -314,7 +320,8 @@ class VoiceChatApp {
       this.status.textContent = "Recording...";
     } catch (error) {
       console.error("Error starting recording:", error);
-      this.status.textContent = "Error starting recording. Please check microphone permissions.";
+      this.status.textContent =
+        "Error starting recording. Please check microphone permissions.";
     }
   }
 
@@ -324,12 +331,12 @@ class VoiceChatApp {
     this.recordButton.textContent = "Start Recording";
     this.recordButton.classList.remove("active");
     this.status.textContent = "Recording stopped";
-    
+
     // Stop audio processing
-    if (this.audioContext && this.audioContext.state === 'running') {
+    if (this.audioContext && this.audioContext.state === "running") {
       this.audioContext.suspend();
     }
-    
+
     // Stop current audio if playing
     this.stopCurrentAudio();
 

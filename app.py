@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import json
 import base64
-from elevenlabs import generate
+from smallest import Smallest
 import os
 from openai import OpenAI
 from typing import Dict, Optional, List
@@ -20,8 +20,10 @@ from queue import Queue
 
 load_dotenv()
 
-ELEVEN_LABS_API_KEY = ""
+# Remove ELEVEN_LABS_API_KEY
+# ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
 OPENAI_API_KEY = ""
+SMALLEST_AI_API_KEY = ""
 
 END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
     "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
@@ -204,7 +206,9 @@ class AI_SalesAgent:
         print(f"Initializing AI agent with prompt: {self.system_prompt[:200]}...")
         
         self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
-        self.elevenlabs_api_key = ELEVEN_LABS_API_KEY
+        # Remove ElevenLabs API key
+        # self.elevenlabs_api_key = ELEVEN_LABS_API_KEY
+        self.smallestai_client = Smallest(api_key=SMALLEST_AI_API_KEY)
         self.conversation_history = [{"role": "system", "content": self.system_prompt}]
         self.end_call_detected = False
         self.end_call_confirmed = False
@@ -226,12 +230,8 @@ class AI_SalesAgent:
             if self.end_call_detected and ("yes" in user_input.lower() or "okay" in user_input.lower() or "sure" in user_input.lower()):
                 self.end_call_confirmed = True
                 farewell = "Thank you for your time. Have a great day! Goodbye!"
-                audio_data = generate(
-                    api_key=self.elevenlabs_api_key,
-                    text=farewell,
-                    voice="Aria",
-                    model="eleven_flash_v2_5"
-                )
+                print(f"self.smallestai_client: {self.smallestai_client}")
+                audio_data = self.smallestai_client.synthesize(farewell)
                 return farewell, audio_data, True
             
             if was_interrupted and self.current_response_context:
@@ -244,12 +244,7 @@ class AI_SalesAgent:
             if self.check_for_end_call(user_input) and not self.end_call_detected:
                 self.end_call_detected = True
                 confirmation_msg = "Would you like to end our conversation?"
-                audio_data = generate(
-                    api_key=self.elevenlabs_api_key,
-                    text=confirmation_msg,
-                    voice="Aria",
-                    model="eleven_flash_v2_5"
-                )
+                audio_data = self.smallestai_client.synthesize(confirmation_msg)
                 return confirmation_msg, audio_data, False
             
              # Reset end_call_detected if user continues conversation
@@ -275,12 +270,7 @@ class AI_SalesAgent:
                 self.update_entities(entities)
 
             print("Generating audio response...")
-            audio_data = generate(
-                api_key=self.elevenlabs_api_key,
-                text=spoken_response,
-                voice="Aria",
-                model="eleven_flash_v2_5"
-            )
+            audio_data = self.smallestai_client.synthesize(spoken_response)
             print("Audio response generated successfully")
 
             self.conversation_history.append({"role": "assistant", "content": spoken_response})
@@ -398,12 +388,8 @@ async def websocket_endpoint(websocket: WebSocket):
             
             if data["action"] == "start_recording":
                 greeting = "Hello! I'm calling from Toshal Infotech. I'd love to discuss how our services could benefit your business. Is this a good time to talk?"
-                audio_data = generate(
-                    api_key=ELEVEN_LABS_API_KEY,
-                    text=greeting,
-                    voice="Aria",
-                    model="eleven_flash_v2_5"
-                )
+                print(f"agent.smallestai_client: {agent.smallestai_client}")
+                audio_data = agent.smallestai_client.synthesize(greeting)
                 
                 await websocket.send_json({
                     "type": "ai_response",
