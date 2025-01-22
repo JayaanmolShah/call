@@ -151,8 +151,10 @@ class VoiceChatApp {
   }
 
   initializeWebSocket() {
-    this.ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
-
+    this.ws = new WebSocket(
+      `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+    );
+    
     this.ws.onopen = () => {
       console.log("WebSocket connection established");
     };
