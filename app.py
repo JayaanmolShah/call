@@ -42,6 +42,7 @@ app.add_middleware(
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 @app.get("/")
 async def read_index():
     return FileResponse('index.html')
