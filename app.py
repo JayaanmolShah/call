@@ -263,7 +263,7 @@ class AI_SalesAgent:
                     api_key=self.elevenlabs_api_key,
                     text=farewell,
                     voice="Aria",
-                    model="eleven_monolingual_v1"
+                    model="eleven_flash_v2_5"
                 )
                 return farewell, audio_data, True
             
@@ -275,7 +275,7 @@ class AI_SalesAgent:
                     api_key=self.elevenlabs_api_key,
                     text=confirmation_msg,
                     voice="Aria",
-                    model="eleven_monolingual_v1"
+                    model="eleven_flash_v2_5"
                 )
                 return confirmation_msg, audio_data, False
             
