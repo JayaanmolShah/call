@@ -20,8 +20,8 @@ from queue import Queue
 
 load_dotenv()
 
-ELEVEN_LABS_API_KEY = os.getenv("ELEVEN_LABS_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ELEVEN_LABS_API_KEY = ""
+OPENAI_API_KEY = ""
 
 END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
     "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
@@ -248,7 +248,7 @@ class AI_SalesAgent:
                     api_key=self.elevenlabs_api_key,
                     text=confirmation_msg,
                     voice="Aria",
-                    model=""
+                    model="eleven_flash_v2_5"
                 )
                 return confirmation_msg, audio_data, False
             
