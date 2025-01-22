@@ -13,14 +13,13 @@ import io
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass 
 from typing import List
 from datetime import datetime
 
 app = FastAPI()
 ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-
 END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
     "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
 
