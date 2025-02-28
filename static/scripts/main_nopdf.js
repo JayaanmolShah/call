@@ -59,7 +59,7 @@ class VoiceChatApp {
     // Enable recording by default
     if (this.recordButton) {
       this.recordButton.disabled = false;
-      this.status.textContent = 'Click "Start Recording" to begin conversation';
+      this.status.textContent = 'Click "Start Converstion" to begin conversation';
     }
 
     this.setupFileUpload();
