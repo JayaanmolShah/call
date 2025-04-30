@@ -7,24 +7,80 @@ import base64
 from elevenlabs import generate
 import os
 from openai import OpenAI
-from typing import Dict, Optional, List
+from typing import Any,Dict, Optional, List
 import PyPDF2
 import io
 from datetime import datetime
-from dotenv import load_dotenv
-
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import asyncio
 from queue import Queue
 
-load_dotenv()
 
-ELEVEN_LABS_API_KEY = ""
-OPENAI_API_KEY = ""
+ELEVEN_LABS_API_KEY = os.environ.get("ELEVEN_LABS_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+# Default sales prompt
+DEFAULT_SALES_PROMPT = """You are an AI sales agent for Toshal Infotech, a technology consulting company. 
+You've already introduced yourself at the start of the call, so don't introduce yourself again. And Don't say Hello or Hi etc..
+Your role is to understand client needs and guide them toward our solutions.
+
+Available Services:
+- Custom Software Development: Building tailored software solutions for businesses
+- Web Development: Creating modern, responsive websites and web applications
+- Mobile App Development: Developing iOS and Android applications
+- Cloud Solutions: Cloud migration, hosting, and infrastructure management
+- Digital Transformation: Helping businesses modernize their digital processes
+- IT Consulting: Strategic technology planning and implementation
+
+Industries We Serve: Healthcare, Finance, Education, Retail, Manufacturing, Technology
+
+Key Points:
+- Over 10 years of industry experience
+- Dedicated project managers for each client
+- Agile development methodology
+- 24/7 support
+- Competitive pricing
+- Strong focus on security and scalability
+
+Objectives:
+- Must Gather client information(E-mail,Name,Company name)
+- Understand requirements
+- Match with services
+- Must try to Schedule consultation
+- Must not talk about prices unless asked for it by the user.    
+
+Conversation Flow:
+- Focus on understanding client's business and challenges
+- Present relevant solutions
+- Schedule consultation meeting
+
+Strict Guidelines:
+- Keep responses under 3 sentences
+- Focus on business challenges
+- Guide toward consultation
+- No technical details unless asked
+- Persuade client and pitch your services, even if the client shows disinterest
+
+After each response, include entity tracking in this format:
+[[ENTITIES]]
+{
+    "entities": {
+        "name": "identified name or null",
+        "email": "identified email or null",
+        "company_name": "identified company or null",
+        "requirements": ["requirement1", "requirement2"],
+        "meeting_date": "identified date or null",
+        "meeting_time": "identified time or null",
+        "industry": "identified industry or null"
+    }
+}
+Consider today's date as {datetime.now().strftime("%d-%m-%Y")} and time as {datetime.now().strftime("%I:%M %p")}.
+If user not specified date but say "Tomorrow", "Day After Tomorrow", "Next <DAY_NAME>", "This <DAY_NAME>" then set date according from Today's date ({datetime.now()}) and save in "DD-MM-YYYY" Format."""
 
 END_CALL_PHRASES = ["end call", "end the call", "goodbye", "good day", "bye", "quit", "stop", "hang up", 
     "end conversation", "that's all", "thank you bye", "thanks bye", "stop the call", "leave me alone", "thank you"]
+
 app = FastAPI()
 
 # Add CORS middleware
@@ -46,7 +102,6 @@ class AudioStreamManager:
         async with self.stream_lock:
             if self.current_stream:
                 self.should_stop.set()
-                # Wait for current stream to finish
                 await asyncio.sleep(0.1)
             
             self.should_stop.clear()
@@ -195,12 +250,12 @@ If user not specified date but say "Tommorrow", "Day After Tommorrow", "Next <DA
 
         except Exception as e:
             print(f"Error structuring company info: {str(e)}")
-            return None
+            return None    
     pass
+
 class AI_SalesAgent:
     def __init__(self, system_prompt=None):
-        # Use the provided prompt or fall back to the global current_sales_prompt
-        self.system_prompt = system_prompt or current_sales_prompt
+        self.system_prompt = system_prompt or DEFAULT_SALES_PROMPT
         print(f"Initializing AI agent with prompt: {self.system_prompt[:200]}...")
         
         self.openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -217,7 +272,6 @@ class AI_SalesAgent:
         self.current_response_context = None
 
     def check_for_end_call(self, text: str) -> bool:
-        """Check if the input contains any end call phrases"""
         return any(phrase.lower() in text.lower() for phrase in END_CALL_PHRASES)
 
     async def generate_response(self, user_input: str, was_interrupted: bool = False) -> tuple[str, bytes, bool]:
@@ -240,7 +294,6 @@ class AI_SalesAgent:
             else:
                 context = user_input
             
-            # Set end_call_detected flag if end call phrase detected
             if self.check_for_end_call(user_input) and not self.end_call_detected:
                 self.end_call_detected = True
                 confirmation_msg = "Would you like to end our conversation?"
@@ -252,7 +305,6 @@ class AI_SalesAgent:
                 )
                 return confirmation_msg, audio_data, False
             
-             # Reset end_call_detected if user continues conversation
             if self.end_call_detected and ("no" in user_input.lower() or "continue" in user_input.lower()):
                 self.end_call_detected = False
             
@@ -291,7 +343,6 @@ class AI_SalesAgent:
             return None, None, False
 
     async def handle_interruption(self, user_input: str) -> tuple[str, bytes, bool]:
-        """Handle user interruption with context awareness"""
         await self.audio_manager.stop_current_stream()
         return await self.generate_response(user_input, was_interrupted=True)
 
@@ -317,9 +368,8 @@ class AI_SalesAgent:
                 self.client_entities[key] = value
         print("Updated client entities:", json.dumps(self.client_entities, indent=2))
 
-current_sales_prompt = "You are an AI sales agent. Your role is to understand client needs and guide them toward our solutions. Please be professional and courteous."
+current_sales_prompt = DEFAULT_SALES_PROMPT
 ai_agents: Dict[str, AI_SalesAgent] = {}
-
 
 @app.post("/upload_knowledge")
 async def upload_knowledge(file: UploadFile = File(...)):
@@ -388,6 +438,7 @@ async def websocket_endpoint(websocket: WebSocket):
     connection_id = str(id(websocket))
     
     try:
+        # Create new AI agent with default or current sales prompt
         ai_agents[connection_id] = AI_SalesAgent(system_prompt=current_sales_prompt)
         print(f"Created new AI agent for connection {connection_id} with current sales prompt")
         agent = ai_agents[connection_id]
@@ -411,7 +462,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     "audio": base64.b64encode(audio_data).decode('utf-8') if audio_data else None
                 })
             
-            # --- NEW: Added user_speaking action handler ---
             elif data["action"] == "user_speaking":
                 print("User speaking detected, handling interruption...")
                 if agent.current_response_context:
