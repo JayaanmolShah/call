@@ -56,36 +56,48 @@ class VoiceChatApp {
     this.status = document.getElementById("status");
     this.conversation = document.getElementById("conversation");
 
+    // Enable recording by default
+    if (this.recordButton) {
+      this.recordButton.disabled = false;
+      this.status.textContent = 'Click "Start Recording" to begin conversation';
+    }
+
     this.setupFileUpload();
     this.setupSpeechRecognition();
     this.setupEventListeners();
     this.initializeAudioWorklet();
+
+    // Initialize WebSocket connection immediately
+    this.initializeWebSocket();
   }
 
   async initializeAudioWorklet() {
     try {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      this.audioContext = new (window.AudioContext ||
+        window.webkitAudioContext)();
       this.audioAnalyser = this.audioContext.createAnalyser();
       this.audioAnalyser.fftSize = 2048;
 
-      // Create blob URL for the worklet code
-      const blob = new Blob([voiceDetectionWorkletCode], { type: 'text/javascript' });
+      const blob = new Blob([voiceDetectionWorkletCode], {
+        type: "text/javascript",
+      });
       const workletUrl = URL.createObjectURL(blob);
 
-      // Load the worklet
       await this.audioContext.audioWorklet.addModule(workletUrl);
-      this.audioWorklet = new AudioWorkletNode(this.audioContext, 'voice-detection-processor');
-      
+      this.audioWorklet = new AudioWorkletNode(
+        this.audioContext,
+        "voice-detection-processor"
+      );
+
       this.audioWorklet.port.onmessage = (event) => {
         if (event.data.userSpeaking && this.isAgentSpeaking) {
           this.handleUserSpeaking();
         }
       };
 
-      // Clean up the blob URL
       URL.revokeObjectURL(workletUrl);
     } catch (error) {
-      console.error('Error initializing audio worklet:', error);
+      console.error("Error initializing audio worklet:", error);
     }
   }
 
@@ -93,20 +105,27 @@ class VoiceChatApp {
     const fileUpload = document.getElementById("fileUpload");
     const pdfInput = document.getElementById("pdfInput");
 
-    ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
+    if (!fileUpload || !pdfInput) {
+      console.log(
+        "File upload elements not found - continuing without file upload functionality"
+      );
+      return;
+    }
+
+    ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
       fileUpload.addEventListener(eventName, (e) => {
         e.preventDefault();
         e.stopPropagation();
       });
     });
 
-    ["dragenter", "dragover"].forEach(eventName => {
+    ["dragenter", "dragover"].forEach((eventName) => {
       fileUpload.addEventListener(eventName, () => {
         fileUpload.classList.add("dragover");
       });
     });
 
-    ["dragleave", "drop"].forEach(eventName => {
+    ["dragleave", "drop"].forEach((eventName) => {
       fileUpload.addEventListener(eventName, () => {
         fileUpload.classList.remove("dragover");
       });
@@ -141,9 +160,11 @@ class VoiceChatApp {
       const result = await response.json();
 
       if (result.status === "success") {
-        this.updateUploadStatus("Knowledge base uploaded successfully✅!", "success");
-        this.recordButton.disabled = false;
-        this.status.textContent = 'Click "Start Recording" to begin conversation';
+        this.updateUploadStatus(
+          "Knowledge base updated successfully✅!",
+          "success"
+        );
+        // Reinitialize WebSocket to use new knowledge base
         this.initializeWebSocket();
       } else {
         this.updateUploadStatus(result.message || "Upload failed", "error");
@@ -156,14 +177,21 @@ class VoiceChatApp {
 
   updateUploadStatus(message, type) {
     const uploadStatus = document.getElementById("uploadStatus");
-    uploadStatus.textContent = message;
-    uploadStatus.className = `upload-status ${type}`;
+    if (uploadStatus) {
+      uploadStatus.textContent = message;
+      uploadStatus.className = `upload-status ${type}`;
+    }
   }
 
   setupSpeechRecognition() {
     if (!("webkitSpeechRecognition" in window)) {
-      this.status.textContent = "Speech recognition is not supported in this browser.";
-      this.recordButton.disabled = true;
+      if (this.status) {
+        this.status.textContent =
+          "Speech recognition is not supported in this browser.";
+      }
+      if (this.recordButton) {
+        this.recordButton.disabled = true;
+      }
       return;
     }
 
@@ -186,10 +214,14 @@ class VoiceChatApp {
 
       if (finalTranscript) {
         this.addMessage(finalTranscript, "user");
-        this.ws.send(JSON.stringify({
-          action: "message",
-          text: finalTranscript,
-        }));
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(
+            JSON.stringify({
+              action: "message",
+              text: finalTranscript,
+            })
+          );
+        }
       }
 
       if (interimTranscript) {
@@ -199,7 +231,9 @@ class VoiceChatApp {
 
     this.recognition.onerror = (event) => {
       console.error("Speech recognition error:", event.error);
-      this.status.textContent = `Error: ${event.error}`;
+      if (this.status) {
+        this.status.textContent = `Error: ${event.error}`;
+      }
     };
 
     this.recognition.onend = () => {
@@ -213,16 +247,16 @@ class VoiceChatApp {
     const now = Date.now();
     if (now - this.lastUserSpeakingTime > this.userSpeakingDebounceTime) {
       this.lastUserSpeakingTime = now;
-      
-      // Stop current audio playback
+
       this.stopCurrentAudio();
-      
-      // Notify server about interruption
+
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({
-          action: "user_speaking",
-          timestamp: now
-        }));
+        this.ws.send(
+          JSON.stringify({
+            action: "user_speaking",
+            timestamp: now,
+          })
+        );
       }
     }
   }
@@ -237,6 +271,11 @@ class VoiceChatApp {
   }
 
   initializeWebSocket() {
+    // Close existing connection if any
+    if (this.ws) {
+      this.ws.close();
+    }
+
     this.ws = new WebSocket("ws://127.0.0.1:8000/ws");
 
     this.ws.onopen = () => {
@@ -248,31 +287,39 @@ class VoiceChatApp {
 
       if (data.type === "ai_response") {
         this.addMessage(data.text, "agent");
-        
+
         if (data.audio) {
-          // Stop any currently playing audio
           this.stopCurrentAudio();
-          
-          // Create and play new audio
+
           const audio = new Audio("data:audio/wav;base64," + data.audio);
           this.currentAudio = audio;
-          
-          // Set up audio interruption handling
-          audio.addEventListener('play', () => {
+
+          audio.addEventListener("play", () => {
             this.isAgentSpeaking = true;
-            this.status.textContent = 'Agent speaking...';
+            if (this.status) {
+              this.status.textContent = "Agent speaking...";
+            }
           });
-          
-          audio.addEventListener('ended', () => {
+
+          audio.addEventListener("ended", () => {
             this.isAgentSpeaking = false;
             this.currentAudio = null;
-            this.status.textContent = 'Recording...';
+            if (this.status) {
+              this.status.textContent = "Recording...";
+            }
           });
-          
+
           try {
             await audio.play();
           } catch (error) {
-            console.error('Error playing audio:', error);
+            console.error("Error playing audio:", error);
+          }
+        }
+
+        if (data.end_call) {
+          this.stopRecording();
+          if (this.ws) {
+            this.ws.close();
           }
         }
       }
@@ -280,57 +327,72 @@ class VoiceChatApp {
 
     this.ws.onerror = (error) => {
       console.error("WebSocket error:", error);
-      this.status.textContent = "Connection error. Please refresh the page.";
+      if (this.status) {
+        this.status.textContent = "Connection error. Please refresh the page.";
+      }
+    };
+
+    this.ws.onclose = () => {
+      console.log("WebSocket connection closed");
     };
   }
 
   async startRecording() {
     try {
-      // Initialize audio stream for voice detection
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaStreamSource = this.audioContext.createMediaStreamSource(stream);
-      
-      // Connect audio processing chain
+      const mediaStreamSource =
+        this.audioContext.createMediaStreamSource(stream);
+
       mediaStreamSource
         .connect(this.audioAnalyser)
         .connect(this.audioWorklet)
         .connect(this.audioContext.destination);
 
-      // Resume audio context if it was suspended
-      if (this.audioContext.state === 'suspended') {
+      if (this.audioContext.state === "suspended") {
         await this.audioContext.resume();
       }
 
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({
-          action: "start_recording"
-        }));
+        this.ws.send(
+          JSON.stringify({
+            action: "start_recording",
+          })
+        );
       }
 
       this.recognition.start();
       this.isRecording = true;
-      this.recordButton.textContent = "Stop Recording";
-      this.recordButton.classList.add("active");
-      this.status.textContent = "Recording...";
+      if (this.recordButton) {
+        this.recordButton.textContent = "Stop Recording";
+        this.recordButton.classList.add("active");
+      }
+      if (this.status) {
+        this.status.textContent = "Recording...";
+      }
     } catch (error) {
       console.error("Error starting recording:", error);
-      this.status.textContent = "Error starting recording. Please check microphone permissions.";
+      if (this.status) {
+        this.status.textContent =
+          "Error starting recording. Please check microphone permissions.";
+      }
     }
   }
 
   stopRecording() {
     this.recognition.stop();
     this.isRecording = false;
-    this.recordButton.textContent = "Start Recording";
-    this.recordButton.classList.remove("active");
-    this.status.textContent = "Recording stopped";
-    
-    // Stop audio processing
-    if (this.audioContext && this.audioContext.state === 'running') {
+    if (this.recordButton) {
+      this.recordButton.textContent = "Start Recording";
+      this.recordButton.classList.remove("active");
+    }
+    if (this.status) {
+      this.status.textContent = "Recording stopped";
+    }
+
+    if (this.audioContext && this.audioContext.state === "running") {
       this.audioContext.suspend();
     }
-    
-    // Stop current audio if playing
+
     this.stopCurrentAudio();
 
     const interimElement = document.getElementById("interim");
@@ -340,6 +402,8 @@ class VoiceChatApp {
   }
 
   addMessage(text, sender) {
+    if (!this.conversation) return;
+
     const messageDiv = document.createElement("div");
     messageDiv.className = `message ${sender}-message`;
     messageDiv.textContent = text;
@@ -348,6 +412,8 @@ class VoiceChatApp {
   }
 
   updateInterimText(text) {
+    if (!this.conversation) return;
+
     let interimElement = document.getElementById("interim");
     if (!interimElement) {
       interimElement = document.createElement("div");
@@ -360,13 +426,15 @@ class VoiceChatApp {
   }
 
   setupEventListeners() {
-    this.recordButton.addEventListener("click", () => {
-      if (!this.isRecording) {
-        this.startRecording();
-      } else {
-        this.stopRecording();
-      }
-    });
+    if (this.recordButton) {
+      this.recordButton.addEventListener("click", () => {
+        if (!this.isRecording) {
+          this.startRecording();
+        } else {
+          this.stopRecording();
+        }
+      });
+    }
   }
 }
 
